@@ -2,6 +2,27 @@
 
 Azure Function that processes closed ServiceNow incidents, generates a structured RCA with Azure Foundry, validates schema, and persists results to Cosmos Table API.
 
+## System Diagram
+![Ryder RCA System Diagram](system_documentation/Ryder%20RCA%20system.png)
+
+## Business Overview
+This system is designed to accelerate post-incident learning for closed P1/critical incidents by producing a consistent, structured RCA artifact within minutes of ticket closure.
+
+From the approved spec, the function provides a deterministic closed-ticket workflow: it accepts `{ ticketId, status }`, exits early when not closed, and for closed incidents it gathers ServiceNow evidence, attempts transcript enrichment, generates RCA JSON, validates schema, and stores a durable record in Cosmos Table API.
+
+From the Foundry agent prompt, the RCA is intentionally a **first-pass analysis for human review** (not final adjudication). The model is constrained to be evidence-based, neutral, and non-speculative, with explicit confidence scoring and clear separation of fact vs inference.
+
+### Why this matters
+- Reduces time-to-first-RCA for engineering and operations teams.
+- Improves consistency of incident review artifacts across teams.
+- Creates an auditable incident knowledge trail for leadership and reliability programs.
+- Supports higher-quality PIR meetings by front-loading timeline, root-cause hypotheses, and prioritized corrective actions.
+
+### Operating boundaries
+- **Terminal failures** (ServiceNow fetch, Foundry failure/schema invalid, Cosmos write) return deterministic error envelopes.
+- **Best-effort failures** (transcript retrieval) do not block RCA generation.
+- Output is strict JSON for downstream reliability workflows and governance controls.
+
 ## Current Status
 - Closed-ticket flow validated in cloud on `ryder-rca-dev-func`.
 - Cosmos auth finalized for cloud using Managed Identity + AAD.
