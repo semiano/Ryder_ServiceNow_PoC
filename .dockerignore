@@ -1,0 +1,15 @@
+.git
+.venv
+.vscode
+.pytest_cache
+__pycache__
+tests
+specs
+.deploy
+__blobstorage__
+__queuestorage__
+__azurite_db_blob__.json
+__azurite_db_blob_extent__.json
+__azurite_db_queue__.json
+__azurite_db_queue_extent__.json
+__azurite_db_table__.json

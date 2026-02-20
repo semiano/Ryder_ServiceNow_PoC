@@ -1,0 +1,40 @@
+.venv/
+.python_packages/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Function local config and secrets
+local.settings.json
+*.secrets.json
+.env
+.env.*
+
+# Build/test artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+.mypy_cache/
+
+# Deployment artifacts
+.deploy/
+
+# Azurite local storage artifacts
+__azurite_db_blob__.json
+__azurite_db_blob_extent__.json
+__azurite_db_queue__.json
+__azurite_db_queue_extent__.json
+__azurite_db_table__.json
+__blobstorage__/
+__queuestorage__/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

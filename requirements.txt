@@ -1,0 +1,6 @@
+azure-functions==1.21.3
+azure-data-tables==12.6.0
+azure-identity==1.23.0
+jsonschema==4.23.0
+requests==2.32.3
+pytest==8.3.4
