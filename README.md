@@ -27,6 +27,7 @@ From the Foundry agent prompt, the RCA is intentionally a **first-pass analysis 
 - Closed-ticket flow validated in cloud on `ryder-rca-dev-func`.
 - Cosmos auth finalized for cloud using Managed Identity + AAD.
 - Container deployment path is operational and documented.
+- Deployment baseline validated in `westus3` on Elastic Premium plan `ryder-rca-dev-ep1-plan`.
 
 ## Repository Structure
 - `src/` application code and service clients.
@@ -62,6 +63,40 @@ Recommended auth mode defaults:
 ## Cloud Deployment
 - Container runbook: `system_documentation/containerized-function-runbook.md`
 - Foundry + Cosmos RBAC: `system_documentation/foundry-rbac-setup.md`
+
+### Verified cloud baseline (March 2026)
+- Resource group: `ryder-rca-dev-rg-westus3`
+- Function App: `ryder-rca-dev-func`
+- Function plan: `ryder-rca-dev-ep1-plan` (EP1 / Elastic Premium)
+- Cosmos account: `ryder-rca-dev-cosmos` with `disableLocalAuth=true`
+- Runtime auth mode: `COSMOS_TABLE_AUTH_MODE=aad`
+
+### RBAC and access checks from local machine
+Use these checks after deployment to verify permissions:
+
+```powershell
+$rg = 'ryder-rca-dev-rg-westus3'
+$app = 'ryder-rca-dev-func'
+$kv = 'ryderrcadevkve7e4nj4vs5k'
+$foundryName = 'ryder-multi-agent-demo-resource'
+
+$userObjectId = az ad signed-in-user show --query id -o tsv
+$funcPrincipalId = az functionapp identity show -g $rg -n $app --query principalId -o tsv
+$foundryId = az resource list --name $foundryName --query "[0].id" -o tsv
+$kvId = az keyvault show -g $rg -n $kv --query id -o tsv
+
+az role assignment list --scope $foundryId --query "[?roleDefinitionName=='Cognitive Services User' && (principalId=='$userObjectId' || principalId=='$funcPrincipalId')].{principalId:principalId,principalType:principalType}" -o table
+az role assignment list --scope $kvId --query "[?roleDefinitionName=='Key Vault Secrets User' && (principalId=='$userObjectId' || principalId=='$funcPrincipalId')].{principalId:principalId,principalType:principalType}" -o table
+az cosmosdb sql role assignment list --account-name ryder-rca-dev-cosmos --resource-group $rg --query "[].{principalId:principalId,roleDefinitionId:roleDefinitionId}" -o table
+```
+
+Foundry auth probe:
+
+```powershell
+$endpoint = az functionapp config appsettings list -g $rg -n $app --query "[?name=='FOUNDRY_AGENT_ENDPOINT_URL'].value | [0]" -o tsv
+$token = az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv
+Invoke-WebRequest -Method Post -Uri $endpoint -Headers @{ Authorization = "Bearer $token"; 'Content-Type' = 'application/json' } -Body '{"input":[{"role":"user","content":"ping"}]}'
+```
 
 ## GitHub Publish Checklist
 1. Confirm ignored files are not staged (`local.settings.json`, `.venv/`, `.deploy/`, Azurite files).

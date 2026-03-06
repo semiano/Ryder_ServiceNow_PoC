@@ -9,6 +9,7 @@ If Foundry or Cosmos calls fail with `401`/`403`, run the steps below.
 - Bicep can assign RBAC only when scope constraints match deployment scope.
 - In this repo, Foundry is often in a **different resource group** than the Function App.
 - For cross-RG/subscription scenarios, Azure CLI role assignment is the most reliable operational step.
+- Cosmos SQL role assignments are currently more reliable operationally via CLI than ARM/Bicep in this deployment path.
 
 ## Required roles
 
@@ -105,6 +106,25 @@ Validate Cosmos role assignments:
 az cosmosdb sql role assignment list --account-name <cosmos-account-name> --resource-group <cosmos-rg> --query "[].{principalId:principalId,roleDefinitionId:roleDefinitionId,scope:scope}" -o table
 ```
 
+Assign the same Cosmos role to your local user principal (for local AAD testing):
+
+```powershell
+$userObjectId = az ad signed-in-user show --query id -o tsv
+az cosmosdb sql role assignment create \
+  --account-name <cosmos-account-name> \
+  --resource-group <cosmos-rg> \
+  --scope '/' \
+  --principal-id $userObjectId \
+  --role-definition-id 00000000-0000-0000-0000-000000000002
+```
+
+If duplicate assignments were created during retries, remove extras:
+
+```powershell
+az cosmosdb sql role assignment list --account-name <cosmos-account-name> --resource-group <cosmos-rg> -o table
+az cosmosdb sql role assignment delete --account-name <cosmos-account-name> --resource-group <cosmos-rg> --role-assignment-id <assignment-guid> --yes
+```
+
 ## 7) Local runtime notes
 
 - Ensure `az login` is done in the same account expected for local auth.
@@ -120,6 +140,7 @@ func start --port 7071
 
 `local.settings.json` should include:
 - `FOUNDRY_AGENT_ENDPOINT_URL=<foundry responses endpoint>`
+- `COSMOS_TABLE_AUTH_MODE=aad`
 
 and should **not require**:
 - `FOUNDRY_AGENT_API_KEY`

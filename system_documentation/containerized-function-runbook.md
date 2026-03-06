@@ -50,7 +50,8 @@ az functionapp function list --name ryder-rca-dev-func-cnt --resource-group ryde
 2. Get function key and test non-closed request:
 ```powershell
 $funcName = az functionapp function list --name ryder-rca-dev-func-cnt --resource-group ryder-rca-dev-rg-westus3 --query "[0].name" -o tsv
-$key = az functionapp function keys list --name ryder-rca-dev-func-cnt --resource-group ryder-rca-dev-rg-westus3 --function-name $funcName --query default -o tsv
+$shortFuncName = ($funcName -split '/')[1]
+$key = az functionapp function keys list --name ryder-rca-dev-func-cnt --resource-group ryder-rca-dev-rg-westus3 --function-name $shortFuncName --query default -o tsv
 $body = '{"ticketId":"INC0000015","status":"in_progress"}'
 Invoke-RestMethod -Uri "https://ryder-rca-dev-func-cnt.azurewebsites.net/api/process-closed-ticket?code=$key" -Method Post -ContentType 'application/json' -Body $body
 ```
@@ -67,6 +68,13 @@ az functionapp config appsettings set --name <function-app-name> --resource-grou
 ```powershell
 $principalId = az functionapp identity show --name <function-app-name> --resource-group <function-app-rg> --query principalId -o tsv
 az cosmosdb sql role assignment create --account-name <cosmos-account-name> --resource-group <cosmos-rg> --scope '/' --principal-id $principalId --role-definition-id 00000000-0000-0000-0000-000000000002
+```
+
+Optionally assign the same role to your local user principal for local AAD verification:
+
+```powershell
+$userObjectId = az ad signed-in-user show --query id -o tsv
+az cosmosdb sql role assignment create --account-name <cosmos-account-name> --resource-group <cosmos-rg> --scope '/' --principal-id $userObjectId --role-definition-id 00000000-0000-0000-0000-000000000002
 ```
 
 3. Restart Function App:

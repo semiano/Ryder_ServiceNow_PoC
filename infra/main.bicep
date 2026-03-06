@@ -47,6 +47,9 @@ param simulateCallTranscriptLookup string = 'false'
 @description('Optional Azure AI Foundry/Cognitive Services account name in this resource group for Function MI RBAC assignment')
 param foundryAccountName string = ''
 
+@description('Optional Entra object ID for local PC user/service principal to receive Foundry and Cosmos RBAC')
+param localPrincipalObjectId string = ''
+
 @description('ServiceNow instance URL')
 param serviceNowInstanceUrl string = 'https://your-instance.service-now.com'
 
@@ -57,12 +60,12 @@ param serviceNowAuthScheme string = 'x-sn-apikey'
 param foundryAgentEndpointUrl string = 'https://<resource>.services.ai.azure.com/api/projects/<project>/applications/<app>/protocols/openai/responses?api-version=2025-11-15-preview'
 
 @secure()
-@description('ServiceNow API token value to seed into Key Vault secret SERVICENOW-API-TOKEN')
+@description('Optional ServiceNow API token value to seed into Key Vault secret SERVICENOW-API-TOKEN. Leave empty to keep existing secret value.')
 param serviceNowApiToken string = ''
 
 var baseName = toLower('${appNamePrefix}-${environmentName}')
 var storageName = toLower('st${uniqueString(resourceGroup().id, appNamePrefix, environmentName)}')
-var planName = '${baseName}-plan'
+var planName = '${baseName}-ep1-plan'
 var functionName = '${baseName}-func'
 var workspaceName = '${baseName}-law'
 var appInsightsName = '${baseName}-appi'
@@ -89,8 +92,8 @@ resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   location: location
   tags: tags
   sku: {
-    name: 'Y1'
-    tier: 'Dynamic'
+    name: 'EP1'
+    tier: 'ElasticPremium'
   }
   kind: 'functionapp'
   properties: {
@@ -169,7 +172,7 @@ var storageKey = storage.listKeys().keys[0].value
 var azureWebJobsStorage = 'DefaultEndpointsProtocol=https;AccountName=${storage.name};EndpointSuffix=core.windows.net;AccountKey=${storageKey}'
 var cosmosConnectionString = cosmos.listConnectionStrings().connectionStrings[0].connectionString
 
-resource secretServiceNowToken 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource secretServiceNowToken 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(serviceNowApiToken)) {
   parent: keyVault
   name: 'SERVICENOW-API-TOKEN'
   properties: {
@@ -223,6 +226,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
     keyVaultReferenceIdentity: 'SystemAssigned'
     siteConfig: {
       minTlsVersion: '1.2'
+      alwaysOn: true
       linuxFxVersion: 'Python|3.12'
       ftpsState: 'Disabled'
       appSettings: [
@@ -261,6 +265,10 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'COSMOS_TABLE_NAME'
           value: cosmosTableName
+        }
+        {
+          name: 'COSMOS_TABLE_AUTH_MODE'
+          value: 'aad'
         }
         {
           name: 'LOG_LEVEL'
@@ -330,13 +338,23 @@ resource foundryResource 'Microsoft.CognitiveServices/accounts@2023-10-01-previe
   name: foundryAccountName
 }
 
-resource foundryCognitiveUserAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(foundryAccountName)) {
+resource foundryCognitiveUserAssignmentFunction 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(foundryAccountName)) {
   scope: foundryResource
-  name: guid(foundryResource.id, functionApp.name, 'foundry-cognitive-user')
+  name: guid(foundryResource.id, functionApp.name, 'foundry-cognitive-user-function')
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')
     principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+resource foundryCognitiveUserAssignmentLocal 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(foundryAccountName) && !empty(localPrincipalObjectId)) {
+  scope: foundryResource
+  name: guid(foundryResource.id, localPrincipalObjectId, 'foundry-cognitive-user-local')
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')
+    principalId: localPrincipalObjectId
+    principalType: 'User'
   }
 }
 

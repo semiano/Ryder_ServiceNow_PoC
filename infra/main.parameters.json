@@ -3,7 +3,7 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "location": {
-      "value": "eastus"
+      "value": "westus3"
     },
     "appNamePrefix": {
       "value": "ryder-rca"
@@ -12,13 +12,19 @@
       "value": "dev"
     },
     "serviceNowInstanceUrl": {
-      "value": "https://your-instance.service-now.com"
+      "value": "https://dev330277.service-now.com"
     },
     "serviceNowAuthScheme": {
       "value": "x-sn-apikey"
     },
     "foundryAgentEndpointUrl": {
-      "value": "https://<resource>.services.ai.azure.com/api/projects/<project>/applications/<app>/protocols/openai/responses?api-version=2025-11-15-preview"
+      "value": "https://ryder-multi-agent-demo-resource.services.ai.azure.com/api/projects/ryder-multi-agent-demo/applications/ryder-RCA-agent/protocols/openai/responses?api-version=2025-11-15-preview"
+    },
+    "foundryAccountName": {
+      "value": ""
+    },
+    "localPrincipalObjectId": {
+      "value": "b8709af6-be4b-4f0f-a342-d45f7951998f"
     },
     "serviceNowApiToken": {
       "value": ""
