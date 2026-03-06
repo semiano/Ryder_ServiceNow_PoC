@@ -9,7 +9,6 @@ local.settings.json
 *.secrets.json
 .env
 .env.*
-!.env.example
 
 # Build/test artifacts
 .pytest_cache/

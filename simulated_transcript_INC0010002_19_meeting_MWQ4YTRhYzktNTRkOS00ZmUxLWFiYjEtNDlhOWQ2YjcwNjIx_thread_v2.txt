@@ -1,0 +1,104 @@
+# Simulated transcript placeholder
+# Incident: INC0010002
+# Parsed source field: comments
+# Meeting join URL token (decoded): 19:meeting_MWQ4YTRhYzktNTRkOS00ZmUxLWFiYjEtNDlhOWQ2YjcwNjIx@thread.v2
+# Created: 2026-03-06
+Meeting Title: P1 Incident Bridge – Booking API 502 Errors
+Start Time: 2026-02-18T09:26:00Z
+
+Participants:
+- Alex Chen (Cloud Platform)
+- Maria Rodriguez (Reservations Backend)
+- David Patel (Network Engineering)
+- James O'Neill (Incident Commander)
+- Priya Shah (SRE)
+
+Transcript:
+
+09:26:12
+James O'Neill:
+Alright everyone thanks for joining quickly. We’re seeing elevated 502 errors impacting bookings. Alex can you summarize what we know so far?
+
+09:26:34
+Alex Chen:
+Yes, alerts started around 09:12. API gateway instances are returning intermittent 502s when calling the reservations service.
+
+09:27:05
+Maria Rodriguez:
+From the backend side we’re not seeing errors in the reservation service logs. No deployments today.
+
+09:27:40
+Priya Shah:
+The gateway error logs show upstream connection resets.
+
+09:28:10
+David Patel:
+Checking load balancer metrics now.
+
+09:30:02
+David Patel:
+Load balancer health looks normal. But gateway nodes are opening a very high number of short-lived upstream connections.
+
+09:31:11
+Alex Chen:
+That’s interesting. Did we change connection settings recently?
+
+09:31:40
+Priya Shah:
+Let me check the gateway config history.
+
+09:34:02
+Priya Shah:
+Yes there was a config change this morning adjusting connection timeout and retry behavior.
+
+09:34:19
+James O'Neill:
+Was that part of the performance optimization change?
+
+09:34:31
+Priya Shah:
+Yes it reduced upstream timeout from 30 seconds to 5 seconds.
+
+09:35:10
+Maria Rodriguez:
+Under peak load our service sometimes takes longer than that.
+
+09:36:00
+David Patel:
+That would explain the gateway terminating upstream calls.
+
+09:37:12
+Alex Chen:
+Let’s rollback the config.
+
+09:37:45
+James O'Neill:
+Agreed.
+
+09:40:02
+Priya Shah:
+Rollback in progress.
+
+09:42:15
+Priya Shah:
+Gateway nodes restarting with previous configuration.
+
+09:45:30
+Alex Chen:
+Error rates dropping.
+
+09:47:11
+David Patel:
+Connections stabilizing.
+
+09:50:02
+James O'Neill:
+Let’s monitor for another 10 minutes before declaring mitigation.
+
+09:56:33
+Alex Chen:
+Everything looks normal now.
+
+09:58:00
+James O'Neill:
+Alright incident mitigated. We’ll follow up with RCA and change validation improvements.

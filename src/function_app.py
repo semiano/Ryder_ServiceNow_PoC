@@ -8,6 +8,7 @@ from pathlib import Path
 from time import perf_counter
 import traceback
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 import re
 
@@ -84,6 +85,47 @@ def validate_request_payload(payload: Any) -> tuple[str, str]:
     if not isinstance(status, str) or not status.strip():
         raise ProcessingError("BAD_REQUEST_VALIDATION", "status is required", 400)
     return ticket_id.strip(), status
+
+
+def _safe_url_host(value: str | None) -> str:
+    if not value:
+        return ""
+    try:
+        parsed = urlparse(value)
+        return parsed.netloc or ""
+    except Exception:
+        return ""
+
+
+def _runtime_config_snapshot() -> dict[str, Any]:
+    required_env_keys = [
+        "SERVICENOW_INSTANCE_URL",
+        "SERVICENOW_API_TOKEN",
+        "GRAPH_TENANT_ID",
+        "GRAPH_CLIENT_ID",
+        "GRAPH_CLIENT_SECRET",
+        "FOUNDRY_AGENT_ENDPOINT_URL",
+    ]
+    return {
+        "serviceNowHost": _safe_url_host(os.getenv("SERVICENOW_INSTANCE_URL")),
+        "foundryHost": _safe_url_host(os.getenv("FOUNDRY_AGENT_ENDPOINT_URL")),
+        "cosmosEndpointHost": _safe_url_host(os.getenv("COSMOS_TABLE_ENDPOINT")),
+        "cosmosAuthMode": os.getenv("COSMOS_TABLE_AUTH_MODE", "auto"),
+        "graphFallbackUserIdConfigured": bool(os.getenv("GRAPH_FALLBACK_USER_ID")),
+        "simulateCallTranscriptLookup": env_flag("SIMULATE_CALL_TRANSCRIPT_LOOKUP", default=False),
+        "missingRequiredEnvKeys": [key for key in required_env_keys if not os.getenv(key)],
+    }
+
+
+def _mask_identifier(value: str | None, visible_suffix: int = 8) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) <= visible_suffix:
+        return "*" * len(normalized)
+    return f"***{normalized[-visible_suffix:]}"
 
 
 def compose_ticket_body_text(ticket: dict[str, Any]) -> str:
@@ -182,12 +224,36 @@ def process_payload(
             )
 
         if dependencies is None:
+            log_event(
+                logger,
+                "info",
+                "runtime config snapshot",
+                correlation_id,
+                ticket_id,
+                **_runtime_config_snapshot(),
+            )
             try:
                 dependencies = build_dependencies_from_environment()
             except CosmosTableRepoError as exc:
                 raise ProcessingError("COSMOS_WRITE_FAILED", str(exc)) from exc
+            except KeyError as exc:
+                missing_key = str(exc).strip("'")
+                raise ProcessingError(
+                    "CONFIG_MISSING",
+                    f"Required configuration missing: {missing_key}",
+                ) from exc
+            except ValueError as exc:
+                raise ProcessingError("CONFIG_INVALID", str(exc)) from exc
 
         ticket_key_type = resolve_ticket_key_type(ticket_id)
+        log_event(
+            logger,
+            "info",
+            "ticket key type resolved",
+            correlation_id,
+            ticket_id,
+            ticketKeyType=ticket_key_type,
+        )
 
         sn_start = perf_counter()
         log_event(logger, "info", "ServiceNow fetch start", correlation_id, ticket_id)
@@ -215,6 +281,9 @@ def process_payload(
             meetingReferenceFound=bool(
                 meeting_reference.get("meetingJoinUrl") or meeting_reference.get("meetingIdCandidate")
             ),
+            meetingJoinUrlFound=bool(meeting_reference.get("meetingJoinUrl")),
+            meetingIdCandidateMasked=_mask_identifier(meeting_reference.get("meetingIdCandidate")),
+            meetingReferenceField=meeting_reference.get("foundInField"),
         )
 
         transcript_result = {
@@ -278,6 +347,9 @@ def process_payload(
             ticket_id,
             graphFetchMs=graph_ms,
             transcriptFound=transcript_result.get("found", False),
+            transcriptMatchStrategy=transcript_result["details"].get("matchStrategy"),
+            graphMeetingIdMasked=_mask_identifier(transcript_result["details"].get("graphMeetingId")),
+            graphTranscriptIdMasked=_mask_identifier(transcript_result["details"].get("graphTranscriptId")),
         )
 
         foundry_start = perf_counter()
@@ -480,9 +552,38 @@ def build_dependencies_from_environment() -> ProcessingDependencies:
 @app.route(route="process-closed-ticket", methods=["POST"])
 def process_closed_ticket(req: func.HttpRequest) -> func.HttpResponse:
     correlation_id = str(uuid4())
+    logger = get_logger("process_closed_ticket")
+    body_size = 0
+    try:
+        raw_body = req.get_body() or b""
+        body_size = len(raw_body)
+    except Exception:
+        body_size = 0
+
+    log_event(
+        logger,
+        "info",
+        "http request received",
+        correlation_id,
+        ticket_id=None,
+        method=req.method,
+        url=req.url,
+        userAgent=req.headers.get("User-Agent"),
+        contentType=req.headers.get("Content-Type"),
+        bodyBytes=body_size,
+    )
     try:
         payload = req.get_json()
     except ValueError:
+        log_event(
+            logger,
+            "warning",
+            "invalid json payload",
+            correlation_id,
+            ticket_id=None,
+            contentType=req.headers.get("Content-Type"),
+            bodyBytes=body_size,
+        )
         body = _build_error_response(
             ticket_id=None,
             correlation_id=correlation_id,
