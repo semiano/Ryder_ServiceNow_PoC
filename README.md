@@ -43,6 +43,7 @@ From the Foundry agent prompt, the RCA is intentionally a **first-pass analysis 
    - `pip install -r requirements.txt`
 2. Copy sample settings:
    - `Copy-Item local.settings.sample.json local.settings.json`
+   - `Copy-Item .env.sample .env` (optional; used by local diagnostics scripts)
 3. Update local `Values` in `local.settings.json`:
    - ServiceNow values (`SERVICENOW_*`)
    - Foundry endpoint (`FOUNDRY_AGENT_ENDPOINT_URL`)

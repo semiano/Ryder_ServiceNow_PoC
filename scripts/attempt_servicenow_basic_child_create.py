@@ -102,7 +102,7 @@ def main() -> int:
         "timestampUtc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "instanceHost": instance_url.replace("https://", "").split("/")[0],
         "authAttempt": {
-            "enabled": args.auth_mode == "basic",
+            "enabled": True,
             "authMode": args.auth_mode,
             "hasChildUsername": bool(child_username),
             "hasChildPassword": bool(child_password),
@@ -121,7 +121,7 @@ def main() -> int:
         if not parent:
             report["ok"] = False
             report["error"] = f"Parent ticket not found: {parent_ticket_number}"
-            _write_report(root, report)
+            _write_report(root, report, args.auth_mode)
             print(json.dumps(report, indent=2))
             return 3
 

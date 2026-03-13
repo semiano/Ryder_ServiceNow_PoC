@@ -25,7 +25,7 @@ This runbook deploys this Azure Function as a **custom Linux container** to bypa
 3. Ensures EP1 Linux plan exists.
 4. Creates/updates a separate containerized Function App when allowed by storage policy.
 5. Falls back to deploying container image on source Function App when shared-key storage is disallowed.
-5. Assigns managed identity + `AcrPull`.
+6. Assigns managed identity + `AcrPull`.
 6. Configures identity-based `AzureWebJobsStorage__*` settings.
 7. Enables managed identity pulls from ACR (`acrUseManagedIdentityCreds=true`).
 8. Copies non-storage app settings from source app when deploying to a separate app.
@@ -68,8 +68,13 @@ After deleting/recreating the resource group, run these steps before testing `st
 ```powershell
 $rg = 'ryder-rca-dev-rg-swedencentral'
 $kv = az resource list -g $rg --resource-type Microsoft.KeyVault/vaults --query "[0].name" -o tsv
-$snToken = (Get-Content local.settings.json -Raw | ConvertFrom-Json).Values.SERVICENOW_API_TOKEN
-az keyvault secret set --vault-name $kv --name SERVICENOW-API-TOKEN --value $snToken -o none
+$snToken = Read-Host 'Enter ServiceNow API token' -AsSecureString
+$snTokenPlain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+  [Runtime.InteropServices.Marshal]::SecureStringToBSTR($snToken)
+)
+if ([string]::IsNullOrWhiteSpace($snTokenPlain)) { throw 'Token cannot be empty' }
+az keyvault secret set --vault-name $kv --name SERVICENOW-API-TOKEN --value $snTokenPlain -o none
+$snTokenPlain = $null
 ```
 
 2. Ensure Cosmos Table exists:

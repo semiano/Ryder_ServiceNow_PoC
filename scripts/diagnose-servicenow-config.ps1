@@ -1,8 +1,12 @@
 param(
-    [string]$RootPath = (Get-Location).Path
+    [string]$RootPath = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($RootPath)) {
+    $RootPath = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+}
 
 $settingsPath = Join-Path $RootPath "local.settings.json"
 if (-not (Test-Path $settingsPath)) {

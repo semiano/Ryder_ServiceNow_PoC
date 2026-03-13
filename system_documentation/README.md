@@ -132,7 +132,7 @@ This solution sits between **incident closure** and **formal PIR/RCA review**:
 - Business outcome: faster, more consistent post-incident readiness.
 
 ## 12) Future Growth Path
-- Similar-ticket retrieval and clustering for stronger repeat-pattern analysis.
+- Similar-ticket clustering and richer cross-record relevance scoring.
 - Action ownership integration with engineering planning systems.
 - RCA quality scoring and drift monitoring across incident portfolios.
 - Optional workflow trigger at ticket close event instead of manual API invocation.
