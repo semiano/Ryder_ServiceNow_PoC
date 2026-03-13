@@ -21,6 +21,7 @@ build/
 
 # Deployment artifacts
 .deploy/
+artifacts/
 
 # Azurite local storage artifacts
 __azurite_db_blob__.json

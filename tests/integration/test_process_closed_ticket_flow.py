@@ -1,4 +1,5 @@
 from function_app import ProcessingDependencies, process_payload
+from services.servicenow_client import ServiceNowClientError
 
 
 def _valid_rca() -> dict:
@@ -69,6 +70,40 @@ class StubServiceNow:
             "comments": ["Customer notified"],
         }
 
+    def fetch_similar_records(self, ticket: dict, record_types=None, max_results: int | None = None):
+        return [
+            {
+                "record_type": "incident",
+                "sys_id": "123e4567-e89b-42d3-a456-426614174111",
+                "number": "INC0012000",
+                "short_description": "Prior service impact",
+                "description": "Previous similar failure",
+                "close_notes": "Mitigated by restart",
+                "state": "Closed",
+                "priority": "1",
+                "severity": "1",
+                "assignment_group": "Platform",
+                "opened_at": "2026-01-10T11:00:00Z",
+                "closed_at": "2026-01-10T12:00:00Z",
+                "caller_id": "Operations",
+                "cmdb_ci": "App-01",
+            }
+        ]
+
+    def create_child_incident(self, parent_ticket, short_description, description, correlation_id):
+        assert parent_ticket["number"] == "INC0012345"
+        assert short_description.startswith("RCA Report:")
+        assert "Full RCA JSON" in description
+        assert correlation_id
+        return {
+            "sys_id": "123e4567-e89b-42d3-a456-426614174222",
+            "number": "INC0099999",
+            "short_description": short_description,
+            "state": "New",
+            "assignment_group": "Platform",
+            "opened_at": "2026-02-19T15:01:00Z",
+        }
+
 
 class StubGraph:
     def extract_meeting_reference(self, ticket):
@@ -99,10 +134,20 @@ class StubFoundry:
         self.payload = payload
         self.call_count = 0
 
-    def generate_rca(self, correlation_id, service_now_ticket, ticket_body_text, transcript_text, transcript_metadata):
+    def generate_rca(
+        self,
+        correlation_id,
+        service_now_ticket,
+        ticket_body_text,
+        transcript_text,
+        transcript_metadata,
+        similar_tickets,
+    ):
         self.call_count += 1
         assert correlation_id
         assert "Ticket Number" in ticket_body_text
+        assert isinstance(similar_tickets, list)
+        assert len(similar_tickets) == 1
         return self.payload, "unknown"
 
 
@@ -112,6 +157,11 @@ class StubCosmos:
 
     def upsert_entity(self, entity):
         self.entities.append(entity)
+
+
+class ChildCreateFailServiceNow(StubServiceNow):
+    def create_child_incident(self, parent_ticket, short_description, description, correlation_id):
+        raise ServiceNowClientError("ServiceNow child incident create failed with status 401")
 
 
 def test_closed_happy_path_with_mocks() -> None:
@@ -132,8 +182,14 @@ def test_closed_happy_path_with_mocks() -> None:
 
     assert status_code == 200
     assert body["processed"] is True
+    assert body["similarIncidents"]["recordTypes"] == ["incident"]
+    assert body["similarIncidents"]["count"] == 1
+    assert body["rcaChildTicket"]["created"] is True
+    assert body["rcaChildTicket"]["number"] == "INC0099999"
     assert foundry.call_count == 1
-    assert len(cosmos.entities) == 1
+    assert len(cosmos.entities) == 2
+    assert cosmos.entities[-1]["RCAChildTicketNumber"] == "INC0099999"
+    assert "INC0012000" in cosmos.entities[-1]["SimilarTicketsJson"]
 
 
 def test_invalid_foundry_schema_returns_500_and_no_cosmos_write() -> None:
@@ -191,5 +247,31 @@ def test_simulated_transcript_bypass_uses_static_file(monkeypatch) -> None:
     assert body["processed"] is True
     assert body["transcript"]["found"] is True
     assert body["transcript"]["details"]["matchStrategy"] == "simulated_transcript"
-    assert cosmos.entities[0]["TranscriptFound"] is True
+    assert any(entity["TranscriptFound"] is True for entity in cosmos.entities)
+
+
+def test_child_ticket_create_failure_is_best_effort_and_process_still_succeeds() -> None:
+    foundry = StubFoundry(_valid_rca())
+    cosmos = StubCosmos()
+    deps = ProcessingDependencies(
+        service_now=ChildCreateFailServiceNow(),
+        graph=StubGraph(),
+        foundry=foundry,
+        cosmos=cosmos,
+    )
+
+    status_code, body = process_payload(
+        payload={"ticketId": "INC0012345", "status": "closed"},
+        dependencies=deps,
+        correlation_id="44444444-4444-4444-4444-444444444444",
+    )
+
+    assert status_code == 200
+    assert body["processed"] is True
+    assert body["rcaChildTicket"]["created"] is False
+    assert body["rcaChildTicket"]["number"] == ""
+    assert body["rcaChildTicket"]["error"] == "ServiceNow child incident create failed with status 401"
+    assert len(cosmos.entities) == 2
+    assert cosmos.entities[-1]["RCAChildTicketCreated"] is False
+    assert cosmos.entities[-1]["RCAChildTicketError"] == "ServiceNow child incident create failed with status 401"
 

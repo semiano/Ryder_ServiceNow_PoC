@@ -113,6 +113,12 @@ def _runtime_config_snapshot() -> dict[str, Any]:
         "cosmosAuthMode": os.getenv("COSMOS_TABLE_AUTH_MODE", "auto"),
         "graphFallbackUserIdConfigured": bool(os.getenv("GRAPH_FALLBACK_USER_ID")),
         "simulateCallTranscriptLookup": env_flag("SIMULATE_CALL_TRANSCRIPT_LOOKUP", default=False),
+        "serviceNowSimilarRecordTypes": os.getenv("SERVICENOW_SIMILAR_RECORD_TYPES", "incident"),
+        "serviceNowSimilarMaxResults": os.getenv("SERVICENOW_SIMILAR_MAX_RESULTS", "5"),
+        "serviceNowChildRecordTable": os.getenv("SERVICENOW_CHILD_RECORD_TABLE", "incident"),
+        "serviceNowChildAuthScheme": os.getenv("SERVICENOW_CHILD_AUTH_SCHEME", os.getenv("SERVICENOW_AUTH_SCHEME", "Bearer")),
+        "serviceNowChildHasDedicatedToken": bool(os.getenv("SERVICENOW_CHILD_API_TOKEN")),
+        "serviceNowChildBasicUserConfigured": bool(os.getenv("SERVICENOW_CHILD_USERNAME")),
         "missingRequiredEnvKeys": [key for key in required_env_keys if not os.getenv(key)],
     }
 
@@ -156,6 +162,79 @@ def compose_ticket_body_text(ticket: dict[str, Any]) -> str:
     return "\n".join(rendered)
 
 
+def _stringify_json(value: Any, indent: int | None = None) -> str:
+    return json.dumps(value, indent=indent, ensure_ascii=False, default=str)
+
+
+def _truncate_text(value: str, max_chars: int = 30000) -> str:
+    if len(value) <= max_chars:
+        return value
+    return f"{value[:max_chars]}\n\n[truncated at {max_chars} chars]"
+
+
+def build_similar_ticket_references(similar_incidents: list[dict[str, Any]]) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    for item in similar_incidents:
+        references.append(
+            {
+                "recordType": str(item.get("record_type") or ""),
+                "ticketId": str(item.get("number") or item.get("sys_id") or ""),
+                "shortDescription": str(item.get("short_description") or ""),
+                "sysId": str(item.get("sys_id") or ""),
+            }
+        )
+    return references
+
+
+def compose_rca_child_ticket_short_description(parent_ticket: dict[str, Any]) -> str:
+    parent_title = (parent_ticket.get("short_description") or parent_ticket.get("number") or "Parent Incident").strip()
+    return f"RCA Report: {parent_title}"[:160]
+
+
+def compose_rca_child_ticket_description(
+    parent_ticket: dict[str, Any],
+    rca_json: dict[str, Any],
+    similar_incidents: list[dict[str, Any]],
+) -> str:
+    summary = rca_json.get("summary") or {}
+    root_cause = rca_json.get("rootCause") or {}
+    corrective_actions = rca_json.get("correctiveActions") or []
+
+    similar_lines = [
+        f"- [{item.get('record_type')}] {item.get('number') or item.get('sys_id')}: {item.get('short_description') or ''}"
+        for item in similar_incidents
+    ]
+    corrective_lines = [
+        f"- {action.get('action')} (owner={action.get('owner')}, priority={action.get('priority')})"
+        for action in corrective_actions
+        if isinstance(action, dict)
+    ]
+
+    rendered = [
+        f"Parent Incident Number: {parent_ticket.get('number')}",
+        f"Parent Incident SysId: {parent_ticket.get('sys_id')}",
+        f"Parent Short Description: {parent_ticket.get('short_description')}",
+        "",
+        "RCA Executive Summary:",
+        str(summary.get("executiveSummary") or ""),
+        "",
+        "Root Cause:",
+        f"- Statement: {root_cause.get('statement')}",
+        f"- Category: {root_cause.get('category')}",
+        f"- Confidence: {root_cause.get('confidence')}",
+        "",
+        "Corrective Actions:",
+        *(corrective_lines or ["- None provided"]),
+        "",
+        "Similar Referenced Tickets:",
+        *(similar_lines or ["- None"]),
+        "",
+        "Full RCA JSON:",
+        _stringify_json(rca_json, indent=2),
+    ]
+    return _truncate_text("\n".join(rendered))
+
+
 def _build_error_response(
     ticket_id: str | None,
     correlation_id: str,
@@ -188,6 +267,8 @@ def process_payload(
     graph_ms = 0
     foundry_ms = 0
     cosmos_ms = 0
+    similar_incidents_ms = 0
+    child_ticket_ms = 0
 
     ticket_id = None
     try:
@@ -352,6 +433,33 @@ def process_payload(
             graphTranscriptIdMasked=_mask_identifier(transcript_result["details"].get("graphTranscriptId")),
         )
 
+        similar_incidents: list[dict[str, Any]] = []
+        similar_start = perf_counter()
+        try:
+            similar_incidents = dependencies.service_now.fetch_similar_records(ticket)
+        except ServiceNowClientError as sn_similar_exc:
+            log_event(
+                logger,
+                "warning",
+                "ServiceNow similar incident lookup failed",
+                correlation_id,
+                ticket_id,
+                warningCode="SERVICENOW_SIMILAR_FETCH_FAILED",
+                warningMessage=str(sn_similar_exc),
+            )
+        similar_incidents_ms = int((perf_counter() - similar_start) * 1000)
+        log_event(
+            logger,
+            "info",
+            "ServiceNow similar incident lookup result",
+            correlation_id,
+            ticket_id,
+            similarIncidentsCount=len(similar_incidents),
+            similarIncidentsFetchMs=similar_incidents_ms,
+            similarRecordTypes=list({item.get("record_type") for item in similar_incidents if item.get("record_type")}),
+            similarIncidentNumbers=[item.get("number") for item in similar_incidents if item.get("number")],
+        )
+
         foundry_start = perf_counter()
         log_event(logger, "info", "Foundry call start", correlation_id, ticket_id)
         try:
@@ -367,6 +475,7 @@ def process_payload(
                     "graphTranscriptId": transcript_result["details"].get("graphTranscriptId"),
                     "found": transcript_result.get("found", False),
                 },
+                similar_incidents,
             )
         except FoundryClientError as exc:
             raise ProcessingError("FOUNDRY_CALL_FAILED", str(exc)) from exc
@@ -403,11 +512,18 @@ def process_payload(
             "GraphMeetingId": transcript_result["details"].get("graphMeetingId"),
             "GraphTranscriptId": transcript_result["details"].get("graphTranscriptId"),
             "TranscriptChars": int(transcript_result.get("transcriptChars", 0)),
+            "SimilarIncidentCount": len(similar_incidents),
+            "SimilarTicketsJson": _stringify_json(build_similar_ticket_references(similar_incidents)),
             "FoundryModel": foundry_model or "unknown",
             "RCAJson": json.dumps(rca_json, separators=(",", ":")),
             "RCASummaryTitle": (rca_json.get("summary") or {}).get("title", ""),
             "RCARootCauseCategory": (rca_json.get("rootCause") or {}).get("category", ""),
             "RCARootCauseConfidence": float((rca_json.get("rootCause") or {}).get("confidence", 0.0)),
+            "RCAChildTicketNumber": "",
+            "RCAChildTicketSysId": "",
+            "RCAChildTicketTitle": "",
+            "RCAChildTicketCreated": False,
+            "RCAChildTicketError": "",
             "TimingTotalMs": total_ms,
             "ErrorCode": None,
             "ErrorMessage": None,
@@ -425,6 +541,74 @@ def process_payload(
             correlation_id,
             ticket_id,
             cosmosWriteMs=cosmos_ms,
+        )
+
+        child_ticket_start = perf_counter()
+        child_short_description = compose_rca_child_ticket_short_description(ticket)
+        child_description = compose_rca_child_ticket_description(
+            ticket,
+            rca_json,
+            similar_incidents,
+        )
+        child_ticket: dict[str, Any] | None = None
+        child_ticket_error = ""
+        log_event(
+            logger,
+            "info",
+            "ServiceNow RCA child ticket create start",
+            correlation_id,
+            ticket_id,
+            childTicketTitle=child_short_description,
+        )
+        try:
+            child_ticket = dependencies.service_now.create_child_incident(
+                parent_ticket=ticket,
+                short_description=child_short_description,
+                description=child_description,
+                correlation_id=correlation_id,
+            )
+        except ServiceNowClientError as exc:
+            child_ticket_error = str(exc)
+            log_event(
+                logger,
+                "warning",
+                "ServiceNow RCA child ticket create failed",
+                correlation_id,
+                ticket_id,
+                warningCode="SERVICENOW_CHILD_CREATE_FAILED",
+                warningMessage=child_ticket_error,
+            )
+        child_ticket_ms = int((perf_counter() - child_ticket_start) * 1000)
+
+        if child_ticket:
+            entity["RCAChildTicketNumber"] = child_ticket.get("number") or ""
+            entity["RCAChildTicketSysId"] = child_ticket.get("sys_id") or ""
+            entity["RCAChildTicketTitle"] = child_ticket.get("short_description") or child_short_description
+            entity["RCAChildTicketCreated"] = True
+            entity["RCAChildTicketError"] = ""
+        else:
+            entity["RCAChildTicketNumber"] = ""
+            entity["RCAChildTicketSysId"] = ""
+            entity["RCAChildTicketTitle"] = child_short_description
+            entity["RCAChildTicketCreated"] = False
+            entity["RCAChildTicketError"] = child_ticket_error
+
+        try:
+            dependencies.cosmos.upsert_entity(entity)
+        except CosmosTableRepoError as exc:
+            raise ProcessingError("COSMOS_WRITE_FAILED", str(exc)) from exc
+
+        log_event(
+            logger,
+            "info",
+            "ServiceNow RCA child ticket create end",
+            correlation_id,
+            ticket_id,
+            childTicketCreated=bool(child_ticket),
+            childTicketNumber=(child_ticket or {}).get("number"),
+            childTicketSysIdMasked=_mask_identifier((child_ticket or {}).get("sys_id")),
+            childTicketError=child_ticket_error,
+            childTicketCreateMs=child_ticket_ms,
         )
 
         total_ms = int((perf_counter() - total_start) * 1000)
@@ -449,6 +633,21 @@ def process_payload(
                         "graphMeetingId": transcript_result["details"].get("graphMeetingId"),
                     },
                 },
+                "similarIncidents": {
+                    "attempted": True,
+                    "count": len(similar_incidents),
+                    "recordTypes": list(
+                        {item.get("record_type") for item in similar_incidents if item.get("record_type")}
+                    ),
+                    "numbers": [item.get("number") for item in similar_incidents if item.get("number")],
+                },
+                "rcaChildTicket": {
+                    "created": entity["RCAChildTicketCreated"],
+                    "number": entity["RCAChildTicketNumber"],
+                    "sys_id": entity["RCAChildTicketSysId"],
+                    "short_description": entity["RCAChildTicketTitle"],
+                    "error": entity["RCAChildTicketError"] or None,
+                },
                 "rca": {
                     "generated": True,
                     "schemaVersion": os.getenv("RCA_SCHEMA_VERSION", "1.0"),
@@ -465,7 +664,9 @@ def process_payload(
                     "total": total_ms,
                     "serviceNowFetch": service_now_ms,
                     "graphFetch": graph_ms,
+                    "similarIncidentsFetch": similar_incidents_ms,
                     "foundryCall": foundry_ms,
+                    "childTicketCreate": child_ticket_ms,
                     "cosmosWrite": cosmos_ms,
                 },
             },
@@ -521,6 +722,17 @@ def build_dependencies_from_environment() -> ProcessingDependencies:
         instance_url=os.environ["SERVICENOW_INSTANCE_URL"],
         api_token=os.environ["SERVICENOW_API_TOKEN"],
         auth_scheme=os.getenv("SERVICENOW_AUTH_SCHEME", "Bearer"),
+        similar_record_types=[
+            item.strip()
+            for item in os.getenv("SERVICENOW_SIMILAR_RECORD_TYPES", "incident").split(",")
+            if item.strip()
+        ],
+        similar_max_results=int(os.getenv("SERVICENOW_SIMILAR_MAX_RESULTS", "5")),
+        child_record_table=os.getenv("SERVICENOW_CHILD_RECORD_TABLE", "incident"),
+        child_auth_scheme=os.getenv("SERVICENOW_CHILD_AUTH_SCHEME", os.getenv("SERVICENOW_AUTH_SCHEME", "Bearer")),
+        child_api_token=os.getenv("SERVICENOW_CHILD_API_TOKEN") or os.environ["SERVICENOW_API_TOKEN"],
+        child_username=os.getenv("SERVICENOW_CHILD_USERNAME") or None,
+        child_password=os.getenv("SERVICENOW_CHILD_PASSWORD") or None,
     )
     graph = GraphClient(
         tenant_id=os.environ["GRAPH_TENANT_ID"],

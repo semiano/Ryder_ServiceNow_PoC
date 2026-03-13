@@ -27,7 +27,7 @@ From the Foundry agent prompt, the RCA is intentionally a **first-pass analysis 
 - Closed-ticket flow validated in cloud on `ryder-rca-dev-func`.
 - Cosmos auth finalized for cloud using Managed Identity + AAD.
 - Container deployment path is operational and documented.
-- Deployment baseline validated in `westus3` on Elastic Premium plan `ryder-rca-dev-ep1-plan`.
+- Deployment baseline validated in `swedencentral` on Elastic Premium plan `ryder-rca-dev-ep1-plan`.
 
 ## Repository Structure
 - `src/` application code and service clients.
@@ -54,6 +54,18 @@ Recommended auth mode defaults:
 - Cloud (Function App MI): `COSMOS_TABLE_AUTH_MODE=aad`
 - Local fallback with key: `COSMOS_TABLE_AUTH_MODE=connection_string`
 
+### ServiceNow child-ticket auth settings
+- Child ticket posting can use a dedicated auth path separate from incident read.
+- Default (recommended after your latest ACL fix):
+   - `SERVICENOW_CHILD_AUTH_SCHEME=x-sn-apikey`
+   - `SERVICENOW_CHILD_API_TOKEN` (or leave empty to fall back to `SERVICENOW_API_TOKEN`)
+- Optional fallback for environments requiring user credentials:
+   - `SERVICENOW_CHILD_AUTH_SCHEME=Basic`
+   - `SERVICENOW_CHILD_USERNAME=<integration-user>`
+   - `SERVICENOW_CHILD_PASSWORD=<integration-password>`
+- Optional diagnostics setting:
+   - `SERVICENOW_TEST_PARENT_TICKET=INC0010002`
+
 ## Run and Test
 - Start function host: `func start --port 7071`
 - Run tests: `python -m pytest -q`
@@ -65,7 +77,7 @@ Recommended auth mode defaults:
 - Foundry + Cosmos RBAC: `system_documentation/foundry-rbac-setup.md`
 
 ### Verified cloud baseline (March 2026)
-- Resource group: `ryder-rca-dev-rg-westus3`
+- Resource group: `ryder-rca-dev-rg-swedencentral`
 - Function App: `ryder-rca-dev-func`
 - Function plan: `ryder-rca-dev-ep1-plan` (EP1 / Elastic Premium)
 - Cosmos account: `ryder-rca-dev-cosmos` with `disableLocalAuth=true`
@@ -75,9 +87,9 @@ Recommended auth mode defaults:
 Use these checks after deployment to verify permissions:
 
 ```powershell
-$rg = 'ryder-rca-dev-rg-westus3'
+$rg = 'ryder-rca-dev-rg-swedencentral'
 $app = 'ryder-rca-dev-func'
-$kv = 'ryderrcadevkve7e4nj4vs5k'
+$kv = 'ryderrcadevkvmaqbxxj6yfy'
 $foundryName = 'ryder-multi-agent-demo-resource'
 
 $userObjectId = az ad signed-in-user show --query id -o tsv
@@ -101,7 +113,8 @@ Invoke-WebRequest -Method Post -Uri $endpoint -Headers @{ Authorization = "Beare
 ## GitHub Publish Checklist
 1. Confirm ignored files are not staged (`local.settings.json`, `.venv/`, `.deploy/`, Azurite files).
 2. Ensure no real secrets remain in tracked files.
-3. Initialize and push:
+3. Do not commit generated diagnostics under `artifacts/`.
+4. Initialize and push:
    - `git init`
    - `git add .`
    - `git commit -m "Initial commit: Ryder ServiceNow RCA processor"`

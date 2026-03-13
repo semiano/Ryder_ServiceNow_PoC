@@ -48,6 +48,7 @@ class FoundryClient:
         ticket_body_text: str,
         transcript_text: str,
         transcript_metadata: dict[str, Any],
+        similar_tickets: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], str]:
         model_input = {
             "correlationId": correlation_id,
@@ -57,7 +58,7 @@ class FoundryClient:
             },
             "transcriptText": transcript_text,
             "transcriptMetadata": transcript_metadata,
-            "similarTickets": [],
+            "similarTickets": similar_tickets or [],
             "responseRequirements": {
                 "strictJson": True,
                 "schemaVersion": "1.0",

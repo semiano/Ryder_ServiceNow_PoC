@@ -1,9 +1,9 @@
 param(
     [Parameter(Mandatory = $false)]
-    [string]$ResourceGroup = "ryder-rca-dev-rg-westus3",
+    [string]$ResourceGroup = "ryder-rca-dev-rg-swedencentral",
 
     [Parameter(Mandatory = $false)]
-    [string]$Location = "westus3",
+    [string]$Location = "swedencentral",
 
     [Parameter(Mandatory = $false)]
     [string]$SourceFunctionAppName = "ryder-rca-dev-func",
@@ -20,6 +20,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $imageTag = "${ImageName}:latest"
+$deploymentAppName = $ContainerFunctionAppName
 
 Write-Host "[1/9] Resolving subscription and storage account..."
 $subId = az account show --query id -o tsv
@@ -38,7 +39,7 @@ Write-Host "[3/9] Building container image in ACR..."
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Push-Location $repoRoot
 try {
-    az acr build --registry $acrName --image $imageTag --file Dockerfile "$repoRoot" | Out-Null
+    az acr build --registry $acrName --image $imageTag --file Dockerfile "$repoRoot" --no-logs | Out-Null
 }
 finally {
     Pop-Location
@@ -64,23 +65,35 @@ else {
 Write-Host "[5/9] Creating or updating containerized Function App..."
 $existingContainerApp = az functionapp list --resource-group $ResourceGroup --query "[?name=='$ContainerFunctionAppName'].name | [0]" -o tsv
 if (-not $existingContainerApp) {
+    $allowSharedKey = az storage account show --name $containerStorageAccount --resource-group $ResourceGroup --query allowSharedKeyAccess -o tsv
+    if ($allowSharedKey -ne "true") {
+        Write-Warning "Storage account '$containerStorageAccount' has allowSharedKeyAccess=$allowSharedKey. Falling back to existing source app '$SourceFunctionAppName' for container deployment."
+        $deploymentAppName = $SourceFunctionAppName
+    }
+    else {
         az functionapp create `
             --name $ContainerFunctionAppName `
             --resource-group $ResourceGroup `
             --plan $ContainerPlanName `
-    --storage-account $containerStorageAccount `
+            --storage-account $containerStorageAccount `
             --deployment-container-image-name "$acrLoginServer/$imageTag" `
-      --functions-version 4 | Out-Null
+            --functions-version 4 | Out-Null
+    }
 }
 else {
-        az functionapp config container set `
-            --name $ContainerFunctionAppName `
-            --resource-group $ResourceGroup `
-            --image "$acrLoginServer/$imageTag" | Out-Null
+    $deploymentAppName = $ContainerFunctionAppName
 }
 
+az functionapp config container set `
+    --name $deploymentAppName `
+    --resource-group $ResourceGroup `
+    --image "$acrLoginServer/$imageTag" | Out-Null
+
+$appId = az functionapp show --name $deploymentAppName --resource-group $ResourceGroup --query id -o tsv
+az resource update --ids "$appId/config/web" --set properties.acrUseManagedIdentityCreds=true | Out-Null
+
 Write-Host "[6/9] Assigning managed identity and ACR pull role..."
-$principalId = az functionapp identity assign --name $ContainerFunctionAppName --resource-group $ResourceGroup --query principalId -o tsv
+$principalId = az functionapp identity assign --name $deploymentAppName --resource-group $ResourceGroup --query principalId -o tsv
 $acrId = az acr show --name $acrName --resource-group $ResourceGroup --query id -o tsv
 az role assignment create --assignee-object-id $principalId --assignee-principal-type ServicePrincipal --role AcrPull --scope $acrId 2>$null | Out-Null
 
@@ -91,7 +104,7 @@ az role assignment create --assignee-object-id $principalId --assignee-principal
 az role assignment create --assignee-object-id $principalId --assignee-principal-type ServicePrincipal --role "Storage Table Data Contributor" --scope $storageId 2>$null | Out-Null
 
 az functionapp config appsettings set `
-    --name $ContainerFunctionAppName `
+    --name $deploymentAppName `
     --resource-group $ResourceGroup `
     --settings `
         "AzureWebJobsStorage__accountName=$containerStorageAccount" `
@@ -102,7 +115,7 @@ az functionapp config appsettings set `
         "WEBSITES_ENABLE_APP_SERVICE_STORAGE=false" `
     "DOCKER_ENABLE_CI=true" | Out-Null
 
-az functionapp config appsettings delete --name $ContainerFunctionAppName --resource-group $ResourceGroup --setting-names AzureWebJobsStorage 2>$null | Out-Null
+az functionapp config appsettings delete --name $deploymentAppName --resource-group $ResourceGroup --setting-names AzureWebJobsStorage 2>$null | Out-Null
 
 Write-Host "[8/9] Cloning non-storage app settings from source app..."
 $sourceSettings = az functionapp config appsettings list --name $SourceFunctionAppName --resource-group $ResourceGroup -o json | ConvertFrom-Json
@@ -125,17 +138,34 @@ foreach ($setting in $sourceSettings) {
     $forward += ("{0}={1}" -f $setting.name, $setting.value)
 }
 
-if ($forward.Count -gt 0) {
-    az functionapp config appsettings set --name $ContainerFunctionAppName --resource-group $ResourceGroup --settings $forward | Out-Null
+if ($forward.Count -gt 0 -and $deploymentAppName -ne $SourceFunctionAppName) {
+    az functionapp config appsettings set --name $deploymentAppName --resource-group $ResourceGroup --settings $forward | Out-Null
 }
 
 Write-Host "[9/9] Restarting app and syncing triggers..."
-az functionapp restart --name $ContainerFunctionAppName --resource-group $ResourceGroup | Out-Null
-$syncUri = "https://management.azure.com/subscriptions/$subId/resourceGroups/$ResourceGroup/providers/Microsoft.Web/sites/$ContainerFunctionAppName/syncfunctiontriggers?api-version=2023-12-01"
-az rest --method POST --uri $syncUri | Out-Null
+az functionapp restart --name $deploymentAppName --resource-group $ResourceGroup | Out-Null
+$syncUri = "https://management.azure.com/subscriptions/$subId/resourceGroups/$ResourceGroup/providers/Microsoft.Web/sites/$deploymentAppName/syncfunctiontriggers?api-version=2023-12-01"
 
-$host = az functionapp show --name $ContainerFunctionAppName --resource-group $ResourceGroup --query defaultHostName -o tsv
+$syncSucceeded = $false
+for ($attempt = 1; $attempt -le 6; $attempt++) {
+    try {
+        az rest --method POST --uri $syncUri | Out-Null
+        $syncSucceeded = $true
+        break
+    }
+    catch {
+        if ($attempt -lt 6) {
+            Write-Warning "Sync triggers attempt $attempt failed. Retrying in 10 seconds..."
+            Start-Sleep -Seconds 10
+        }
+    }
+}
+if (-not $syncSucceeded) {
+    Write-Warning "Sync triggers failed after retries. App may still come online once container startup completes."
+}
+
+$hostName = az functionapp show --name $deploymentAppName --resource-group $ResourceGroup --query defaultHostName -o tsv
 Write-Host "Containerized function deployment complete."
-Write-Host "Function App: $ContainerFunctionAppName"
-Write-Host "Host: https://$host"
+Write-Host "Function App: $deploymentAppName"
+Write-Host "Host: https://$hostName"
 Write-Host "ACR Image: $acrLoginServer/$imageTag"

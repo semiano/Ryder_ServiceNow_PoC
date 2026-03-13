@@ -31,7 +31,15 @@ class FakeFoundry:
     def __init__(self) -> None:
         self.called = False
 
-    def generate_rca(self, correlation_id, service_now_ticket, ticket_body_text, transcript_text, transcript_metadata):
+    def generate_rca(
+        self,
+        correlation_id,
+        service_now_ticket,
+        ticket_body_text,
+        transcript_text,
+        transcript_metadata,
+        similar_tickets,
+    ):
         self.called = True
         raise AssertionError("Foundry should not be called for non-closed status")
 
