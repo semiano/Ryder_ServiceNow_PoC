@@ -4,7 +4,6 @@ import json
 from dataclasses import dataclass
 from typing import Any
 import os
-from pathlib import Path
 
 import requests
 from azure.identity import DefaultAzureCredential
@@ -28,10 +27,6 @@ class FoundryClient:
         self.timeout_seconds = timeout_seconds
         self.credential = DefaultAzureCredential()
         self.token_scope = os.getenv("FOUNDRY_TOKEN_SCOPE", "https://ai.azure.com/.default")
-        self.prompt_path = os.getenv(
-            "FOUNDRY_AGENT_PROMPT_PATH",
-            "system_documentation/foundry-agent-system-prompt.md",
-        )
 
     def _build_headers(self) -> dict[str, str]:
         token = self.credential.get_token(self.token_scope)
@@ -69,14 +64,12 @@ class FoundryClient:
             "input": [
                 {
                     "role": "user",
-                    "content": (
-                        "SYSTEM_PROMPT:\n"
-                        f"{self._load_system_prompt()}\n\n"
-                        "INPUT_JSON:\n"
-                        f"{json.dumps(model_input)}"
-                    ),
+                    "content": f"INPUT_JSON:\n{json.dumps(model_input)}",
                 }
             ],
+            "metadata": {
+                "correlationId": correlation_id,
+            },
         }
 
         headers = self._build_headers()
@@ -95,17 +88,6 @@ class FoundryClient:
         rca = self._extract_rca(payload_json)
         model = str(payload_json.get("model") or payload_json.get("modelName") or "unknown")
         return rca, model
-
-    def _load_system_prompt(self) -> str:
-        prompt_file = Path(self.prompt_path)
-        if prompt_file.exists() and prompt_file.is_file():
-            return prompt_file.read_text(encoding="utf-8")
-        return (
-            "You are an enterprise reliability analysis assistant for closed critical incidents. "
-            "Return only valid JSON and no markdown. Output must strictly follow schemaVersion 1.0 RCA format "
-            "with keys: ticket, summary, timeline, rootCause, contributingFactors, detection, resolution, "
-            "correctiveActions, evidence, risks, similarIncidents, appendix."
-        )
 
     def _extract_rca(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self._looks_like_rca(payload):
