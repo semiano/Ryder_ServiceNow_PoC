@@ -59,6 +59,9 @@ param serviceNowAuthScheme string = 'x-sn-apikey'
 @description('Foundry Responses endpoint URL')
 param foundryAgentEndpointUrl string = 'https://<resource>.services.ai.azure.com/api/projects/<project>/applications/<app>/protocols/openai/responses?api-version=2025-11-15-preview'
 
+@description('Optional comma-separated fallback Foundry Agent Responses endpoint URLs')
+param foundryAgentEndpointUrls string = ''
+
 @secure()
 @description('Optional ServiceNow API token value to seed into Key Vault secret SERVICENOW-API-TOKEN. Leave empty to keep existing secret value.')
 param serviceNowApiToken string = ''
@@ -257,6 +260,10 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'FOUNDRY_AGENT_ENDPOINT_URL'
           value: foundryAgentEndpointUrl
+        }
+        {
+          name: 'FOUNDRY_AGENT_ENDPOINT_URLS'
+          value: foundryAgentEndpointUrls
         }
         {
           name: 'COSMOS_TABLE_ENDPOINT'

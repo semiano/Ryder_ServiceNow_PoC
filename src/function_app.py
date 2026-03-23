@@ -744,6 +744,11 @@ def build_dependencies_from_environment() -> ProcessingDependencies:
     )
     foundry = FoundryClient(
         endpoint_url=os.environ["FOUNDRY_AGENT_ENDPOINT_URL"],
+        fallback_endpoint_urls=[
+            endpoint.strip()
+            for endpoint in os.getenv("FOUNDRY_AGENT_ENDPOINT_URLS", "").split(",")
+            if endpoint.strip()
+        ],
     )
     cosmos_auth_mode = os.getenv("COSMOS_TABLE_AUTH_MODE", "auto")
     cosmos = CosmosTableRepository(

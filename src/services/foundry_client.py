@@ -22,8 +22,10 @@ class FoundryClient:
         self,
         endpoint_url: str,
         timeout_seconds: int = 60,
+        fallback_endpoint_urls: list[str] | None = None,
     ) -> None:
-        self.endpoint_url = endpoint_url
+        raw_endpoints = [endpoint_url, *(fallback_endpoint_urls or [])]
+        self.endpoint_urls = self._normalize_endpoint_urls(raw_endpoints)
         self.timeout_seconds = timeout_seconds
         self.credential = DefaultAzureCredential()
         self.token_scope = os.getenv("FOUNDRY_TOKEN_SCOPE", "https://ai.azure.com/.default")
@@ -60,11 +62,83 @@ class FoundryClient:
             },
         }
 
-        payload = {
+        headers = self._build_headers()
+        payload = self._build_agent_payload(
+            correlation_id=correlation_id,
+            content=f"INPUT_JSON:\n{json.dumps(model_input)}",
+        )
+
+        failures: list[str] = []
+        for endpoint_url in self.endpoint_urls:
+            response = requests.post(
+                endpoint_url,
+                headers=headers,
+                json=payload,
+                timeout=self.timeout_seconds,
+            )
+            if response.status_code >= 400:
+                response_snippet = (response.text or "").strip().replace("\n", " ")[:300]
+                failures.append(
+                    f"{endpoint_url} => status {response.status_code}: {response_snippet}"
+                )
+                continue
+
+            payload_json = response.json()
+            try:
+                rca = self._extract_rca(payload_json)
+            except FoundryClientError as exc:
+                failures.append(f"{endpoint_url} => invalid RCA payload: {exc}")
+                continue
+
+            model = str(payload_json.get("model") or payload_json.get("modelName") or "unknown")
+            return rca, model
+
+        raise FoundryClientError(
+            f"All Foundry agent endpoints failed. Attempts: {' | '.join(failures[:5])}"
+        )
+
+    def check_connectivity(self, correlation_id: str = "foundry-connectivity-check") -> dict[str, Any]:
+        headers = self._build_headers()
+        payload = self._build_agent_payload(
+            correlation_id=correlation_id,
+            content="health_check",
+        )
+
+        failures: list[str] = []
+        for endpoint_url in self.endpoint_urls:
+            response = requests.post(
+                endpoint_url,
+                headers=headers,
+                json=payload,
+                timeout=self.timeout_seconds,
+            )
+            if response.status_code >= 400:
+                response_snippet = (response.text or "").strip().replace("\n", " ")[:300]
+                failures.append(
+                    f"{endpoint_url} => status {response.status_code}: {response_snippet}"
+                )
+                continue
+
+            payload_json = response.json()
+            return {
+                "ok": True,
+                "statusCode": response.status_code,
+                "endpointUrl": endpoint_url,
+                "responseId": payload_json.get("id"),
+                "model": payload_json.get("model") or payload_json.get("modelName") or "unknown",
+            }
+
+        raise FoundryClientError(
+            f"Foundry connectivity check failed for all endpoints. Attempts: {' | '.join(failures[:5])}"
+        )
+
+    @staticmethod
+    def _build_agent_payload(correlation_id: str, content: str) -> dict[str, Any]:
+        return {
             "input": [
                 {
                     "role": "user",
-                    "content": f"INPUT_JSON:\n{json.dumps(model_input)}",
+                    "content": content,
                 }
             ],
             "metadata": {
@@ -72,22 +146,19 @@ class FoundryClient:
             },
         }
 
-        headers = self._build_headers()
-        response = requests.post(
-            self.endpoint_url,
-            headers=headers,
-            json=payload,
-            timeout=self.timeout_seconds,
-        )
-        if response.status_code >= 400:
-            response_snippet = (response.text or "").strip().replace("\n", " ")[:500]
-            raise FoundryClientError(
-                f"Foundry request failed with status {response.status_code}. Response: {response_snippet}"
-            )
-        payload_json = response.json()
-        rca = self._extract_rca(payload_json)
-        model = str(payload_json.get("model") or payload_json.get("modelName") or "unknown")
-        return rca, model
+    @staticmethod
+    def _normalize_endpoint_urls(endpoint_urls: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for raw_url in endpoint_urls:
+            url = str(raw_url or "").strip()
+            if not url:
+                continue
+            if url in normalized:
+                continue
+            normalized.append(url)
+        if not normalized:
+            raise FoundryClientError("At least one Foundry agent endpoint URL is required")
+        return normalized
 
     def _extract_rca(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self._looks_like_rca(payload):

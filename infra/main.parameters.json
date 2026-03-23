@@ -20,6 +20,9 @@
     "foundryAgentEndpointUrl": {
       "value": "https://ryder-multi-agent-demo-resource.services.ai.azure.com/api/projects/ryder-multi-agent-demo/applications/ryder-RCA-agent/protocols/openai/responses?api-version=2025-11-15-preview"
     },
+    "foundryAgentEndpointUrls": {
+      "value": ""
+    },
     "foundryAccountName": {
       "value": ""
     },

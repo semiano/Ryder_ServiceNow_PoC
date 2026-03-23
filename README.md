@@ -47,6 +47,7 @@ From the Foundry agent prompt, the RCA is intentionally a **first-pass analysis 
 3. Update local `Values` in `local.settings.json`:
    - ServiceNow values (`SERVICENOW_*`)
    - Foundry endpoint (`FOUNDRY_AGENT_ENDPOINT_URL`)
+   - Optional Foundry fallback endpoints (`FOUNDRY_AGENT_ENDPOINT_URLS`, comma-separated)
    - Cosmos (`COSMOS_TABLE_ENDPOINT`, `COSMOS_TABLE_AUTH_MODE`, optional connection string)
    - Graph credentials (`GRAPH_*`)
 
@@ -70,6 +71,7 @@ Recommended auth mode defaults:
 ## Run and Test
 - Start function host: `func start --port 7071`
 - Run tests: `python -m pytest -q`
+- Optional live Foundry connectivity test: set `RUN_LIVE_FOUNDRY_TESTS=true` and run `python -m pytest tests/integration/test_foundry_agent_live.py -q`
 - Local invoke example:
   - `Invoke-RestMethod -Uri 'http://localhost:7071/api/process-closed-ticket' -Method Post -ContentType 'application/json' -Body '{"ticketId":"INC0000015","status":"closed"}'`
 
