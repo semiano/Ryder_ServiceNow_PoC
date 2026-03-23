@@ -78,6 +78,7 @@ Recommended auth mode defaults:
 ## Cloud Deployment
 - Container runbook: `system_documentation/containerized-function-runbook.md`
 - Foundry + Cosmos RBAC: `system_documentation/foundry-rbac-setup.md`
+- ServiceNow admin setup: `system_documentation/servicenow-admin-setup.md`
 
 ### Verified cloud baseline (March 2026)
 - Resource group: `ryder-rca-dev-rg-swedencentral`

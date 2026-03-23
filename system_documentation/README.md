@@ -73,6 +73,9 @@ Prompt source of truth:
 Foundry RBAC operations guide:
 - [foundry-rbac-setup.md](foundry-rbac-setup.md)
 
+ServiceNow admin setup guide:
+- [servicenow-admin-setup.md](servicenow-admin-setup.md)
+
 ## 7) Data Contracts and Validation
 ### Inbound contract
 ```json
@@ -123,6 +126,7 @@ Operational references:
 - Project implementation spec: [../specs/closed-p1-ticket-rca-processor.spec.md](../specs/closed-p1-ticket-rca-processor.spec.md)
 - Foundry prompt policy: [foundry-agent-system-prompt.md](foundry-agent-system-prompt.md)
 - Foundry RBAC setup: [foundry-rbac-setup.md](foundry-rbac-setup.md)
+- ServiceNow admin setup: [servicenow-admin-setup.md](servicenow-admin-setup.md)
 
 ## 11) How this fits Incident Management Lifecycle
 This solution sits between **incident closure** and **formal PIR/RCA review**:
@@ -145,4 +149,5 @@ This solution sits between **incident closure** and **formal PIR/RCA review**:
 - Full implementation spec: [../specs/closed-p1-ticket-rca-processor.spec.md](../specs/closed-p1-ticket-rca-processor.spec.md)
 - Foundry system prompt: [foundry-agent-system-prompt.md](foundry-agent-system-prompt.md)
 - Foundry + Cosmos RBAC guide: [foundry-rbac-setup.md](foundry-rbac-setup.md)
+- ServiceNow admin setup guide: [servicenow-admin-setup.md](servicenow-admin-setup.md)
 - Container deployment runbook: [containerized-function-runbook.md](containerized-function-runbook.md)
